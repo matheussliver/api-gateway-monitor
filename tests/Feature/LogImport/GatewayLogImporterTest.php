@@ -71,6 +71,7 @@ final class GatewayLogImporterTest extends TestCase
         self::assertSame(filesize($path), $source->last_processed_offset);
         self::assertSame(2, $source->last_processed_line);
         self::assertSame(filesize($path), $source->file_size);
+        self::assertSame(hash_file('sha256', $path), $source->processed_prefix_hash);
 
         $logs = GatewayLog::query()->orderBy('source_line')->get();
         self::assertCount(2, $logs);
@@ -321,6 +322,66 @@ final class GatewayLogImporterTest extends TestCase
         $this->expectExceptionMessage('foi truncado');
 
         $this->importer->import($path);
+    }
+
+    public function test_it_rejects_a_file_whose_processed_prefix_was_modified(): void
+    {
+        $path = $this->createLogFile([
+            $this->fixture('valid-seconds.ndjson'),
+            $this->fixture('valid-milliseconds.ndjson'),
+        ]);
+
+        $this->importer->import($path);
+
+        $originalContents = file_get_contents($path);
+
+        if ($originalContents === false) {
+            self::fail('Não foi possível ler o arquivo temporário de teste.');
+        }
+
+        $modifiedContents = str_replace('ritchie', 'ritchix', $originalContents, $replacementCount);
+
+        self::assertSame(1, $replacementCount);
+        self::assertSame(strlen($originalContents), strlen($modifiedContents));
+
+        file_put_contents($path, $modifiedContents);
+        clearstatcache(true, $path);
+
+        try {
+            $this->importer->import($path);
+            self::fail('A alteração do prefixo processado deveria interromper a importação.');
+        } catch (InvalidLogFile $failure) {
+            self::assertStringContainsString('foi alterado antes do checkpoint', $failure->getMessage());
+        }
+
+        $this->assertDatabaseCount('gateway_logs', 2);
+        $this->assertDatabaseCount('gateway_log_rejections', 0);
+        self::assertSame('ritchie', GatewayLog::query()->where('source_line', 1)->sole()->service_name);
+
+        $source = LogSource::query()->sole();
+        self::assertSame(2, $source->last_processed_line);
+        self::assertSame(filesize($path), $source->last_processed_offset);
+    }
+
+    public function test_it_initializes_the_prefix_hash_for_a_source_created_before_hash_tracking(): void
+    {
+        $path = $this->createLogFile([$this->fixture('valid-seconds.ndjson')]);
+
+        $this->importer->import($path);
+
+        $source = LogSource::query()->sole();
+        $source->forceFill(['processed_prefix_hash' => null])->save();
+
+        $result = $this->importer->import($path);
+
+        self::assertSame(0, $result->importedRecords);
+        self::assertSame(0, $result->rejectedRecords);
+        $this->assertDatabaseCount('gateway_logs', 1);
+
+        $source->refresh();
+        self::assertSame(hash_file('sha256', $path), $source->processed_prefix_hash);
+        self::assertSame(filesize($path), $source->last_processed_offset);
+        self::assertSame(1, $source->last_processed_line);
     }
 
     public function test_it_rejects_a_concurrent_import_of_the_same_file(): void

@@ -14,6 +14,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'last_processed_offset',
     'last_processed_line',
     'file_size',
+    'processed_prefix_hash',
 ])]
 final class LogSource extends Model
 {

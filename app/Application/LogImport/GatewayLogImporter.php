@@ -16,6 +16,8 @@ use InvalidArgumentException;
 
 final class GatewayLogImporter
 {
+    private const int HASH_READ_CHUNK_SIZE = 1_048_576;
+
     public function __construct(
         private readonly NdjsonLineParser $parser,
         private readonly GatewayLogNormalizer $normalizer,
@@ -74,7 +76,11 @@ final class GatewayLogImporter
 
         $source = LogSource::query()->firstOrCreate(
             ['fingerprint' => $fingerprint],
-            ['path' => $path, 'file_size' => $fileSize],
+            [
+                'path' => $path,
+                'file_size' => $fileSize,
+                'processed_prefix_hash' => hash('sha256', ''),
+            ],
         );
 
         $startOffset = $source->last_processed_offset;
@@ -86,9 +92,7 @@ final class GatewayLogImporter
             );
         }
 
-        if (fseek($handle, $startOffset) !== 0) {
-            throw new InvalidLogFile("Não foi possível posicionar a leitura no byte [$startOffset] de [$path].");
-        }
+        $prefixHashContext = $this->verifyProcessedPrefix($handle, $source, $path);
 
         $batch = [];
         $rejections = [];
@@ -119,6 +123,7 @@ final class GatewayLogImporter
                 break;
             }
 
+            hash_update($prefixHashContext, $line);
             $currentLine++;
 
             try {
@@ -152,6 +157,7 @@ final class GatewayLogImporter
                     nextOffset: $currentOffset,
                     nextLine: $currentLine,
                     fileSize: $fileSize,
+                    processedPrefixHash: $this->currentPrefixHash($prefixHashContext),
                 );
 
                 $importedRecords += count($batch);
@@ -172,10 +178,24 @@ final class GatewayLogImporter
                 nextOffset: $currentOffset,
                 nextLine: $currentLine,
                 fileSize: $fileSize,
+                processedPrefixHash: $this->currentPrefixHash($prefixHashContext),
             );
 
             $importedRecords += count($batch);
             $rejectedRecords += count($rejections);
+        }
+
+        if ($batchRecordCount === 0 && $source->processed_prefix_hash === null) {
+            $this->persistBatch(
+                source: $source,
+                records: [],
+                rejections: [],
+                expectedOffset: $checkpointOffset,
+                nextOffset: $currentOffset,
+                nextLine: $currentLine,
+                fileSize: $fileSize,
+                processedPrefixHash: $this->currentPrefixHash($prefixHashContext),
+            );
         }
 
         return new ImportResult(
@@ -203,6 +223,7 @@ final class GatewayLogImporter
         int $nextOffset,
         int $nextLine,
         int $fileSize,
+        string $processedPrefixHash,
     ): void {
         DB::transaction(function () use (
             $source,
@@ -212,6 +233,7 @@ final class GatewayLogImporter
             $nextOffset,
             $nextLine,
             $fileSize,
+            $processedPrefixHash,
         ): void {
             $lockedSource = LogSource::query()->lockForUpdate()->findOrFail($source->id);
 
@@ -263,6 +285,7 @@ final class GatewayLogImporter
                 'last_processed_offset' => $nextOffset,
                 'last_processed_line' => $nextLine,
                 'file_size' => $fileSize,
+                'processed_prefix_hash' => $processedPrefixHash,
             ])->save();
         });
 
@@ -270,6 +293,52 @@ final class GatewayLogImporter
             'last_processed_offset' => $nextOffset,
             'last_processed_line' => $nextLine,
             'file_size' => $fileSize,
+            'processed_prefix_hash' => $processedPrefixHash,
         ]);
+    }
+
+    /**
+     * @param  resource  $handle
+     */
+    private function verifyProcessedPrefix($handle, LogSource $source, string $path): \HashContext
+    {
+        if (fseek($handle, 0) !== 0) {
+            throw new InvalidLogFile("Não foi possível iniciar a verificação de integridade de [$path].");
+        }
+
+        $context = hash_init('sha256');
+        $remainingBytes = $source->last_processed_offset;
+
+        while ($remainingBytes > 0) {
+            $chunk = fread($handle, min(self::HASH_READ_CHUNK_SIZE, $remainingBytes));
+
+            if ($chunk === false || $chunk === '') {
+                throw new InvalidLogFile(
+                    "Não foi possível verificar o prefixo processado de [$path].",
+                );
+            }
+
+            hash_update($context, $chunk);
+            $remainingBytes -= strlen($chunk);
+        }
+
+        $actualHash = $this->currentPrefixHash($context);
+
+        if (
+            $source->processed_prefix_hash !== null
+            && ! hash_equals($source->processed_prefix_hash, $actualHash)
+        ) {
+            throw new InvalidLogFile(
+                "O arquivo de log [$path] foi alterado antes do checkpoint "
+                ."no byte [{$source->last_processed_offset}].",
+            );
+        }
+
+        return $context;
+    }
+
+    private function currentPrefixHash(\HashContext $context): string
+    {
+        return hash_final(hash_copy($context));
     }
 }

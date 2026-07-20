@@ -147,7 +147,15 @@ Cada arquivo é identificado pelo caminho canônico e pela identidade do arquivo
 - Último byte processado;
 - Última linha processada;
 - Tamanho observado do arquivo;
+- Hash SHA-256 do prefixo processado;
 - Identidade da fonte.
+
+Os arquivos de origem possuem contrato estritamente **append-only**: depois que
+uma linha entra no checkpoint, seus bytes não podem ser corrigidos, removidos ou
+reescritos no mesmo arquivo. Antes de retomar uma importação, o serviço recalcula
+o SHA-256 do prefixo processado e recusa a execução se encontrar qualquer
+alteração. Essa verificação relê o prefixo, mas não o interpreta nem o persiste
+novamente.
 
 Ao executar novamente o comando:
 
@@ -155,6 +163,7 @@ Ao executar novamente o comando:
 - Linhas adicionadas: somente o novo trecho é processado;
 - Linha final sem `LF`: permanece pendente até ser concluída;
 - Arquivo truncado: a execução é recusada;
+- Prefixo já processado alterado: a execução é recusada;
 - Mesma fonte em duas execuções simultâneas: a segunda é recusada;
 - Registro inválido: a rejeição é auditada e a leitura continua;
 - Reinício após falha de infraestrutura: a leitura retorna ao último lote confirmado.
@@ -310,7 +319,8 @@ Com o arquivo fornecido de `100.000` linhas e aproximadamente `118 MB`:
 - `5` serviços;
 - Importação inicial em aproximadamente `12,2 s`;
 - Pico de memória da importação: `34 MB`;
-- Reexecução sem alterações: zero inserções em aproximadamente `0,05 s`;
+- Reexecução sem alterações: zero inserções e verificação integral do
+  prefixo em aproximadamente `0,6 s`;
 - Geração dos três relatórios em aproximadamente `1,4 s`;
 - Pico de memória dos relatórios: `26 MB`.
 
