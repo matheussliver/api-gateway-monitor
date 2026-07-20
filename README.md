@@ -10,6 +10,7 @@ Serviço Laravel para importar logs NDJSON do API Gateway de forma incremental, 
 - Nginx + PHP-FPM
 - Docker Compose
 - PHPUnit
+- PCOV
 
 Não há frontend. Toda a operação é realizada por comandos Artisan.
 
@@ -76,6 +77,7 @@ Instale as dependências sem depender de PHP ou Composer no host:
 
 ```bash
 docker compose run --rm --no-deps \
+  --build \
   --user "$(id -u):$(id -g)" \
   -e COMPOSER_HOME=/tmp/composer \
   --entrypoint composer app install --no-interaction
@@ -84,7 +86,7 @@ docker compose run --rm --no-deps \
 Suba os serviços:
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
 Gere a chave da aplicação e execute as migrations:
@@ -221,6 +223,17 @@ Execute a suíte completa:
 docker compose exec app php artisan test
 ```
 
+Execute a suíte com cobertura de linhas e o limite mínimo obrigatório de 90%:
+
+```bash
+docker compose exec app composer test:coverage
+```
+
+O PCOV está incluído na imagem da aplicação e restringe a coleta à pasta
+`app`. Todos os arquivos dessa pasta participam do cálculo, mesmo quando não
+são executados. O comando termina com erro se a cobertura total ficar abaixo
+de 90%, impedindo regressões silenciosas na abrangência dos testes.
+
 Valide o estilo sem modificar arquivos:
 
 ```bash
@@ -295,6 +308,7 @@ Os testes cobrem:
 - Timestamps em segundos e milissegundos;
 - Persistência e precisão de milissegundos;
 - Transações e checkpoints;
+- Rollback e retomada após falha real do MySQL durante um lote;
 - Continuidade após JSON inválido ou campo obrigatório ausente;
 - Persistência e idempotência das rejeições;
 - Reexecução, append, truncamento e concorrência;
@@ -302,6 +316,10 @@ Os testes cobrem:
 - Conteúdo exato dos CSVs;
 - Banco vazio, escaping e regeneração dos relatórios;
 - Integração real com MySQL.
+
+O workflow `.github/workflows/ci.yml` reconstrói a stack do zero em cada `push`
+e pull request, valida o `composer.json`, executa o Pint e aplica o mesmo gate
+de cobertura usado localmente.
 
 ## Estrutura principal
 

@@ -12,6 +12,7 @@ use App\Models\GatewayLog;
 use App\Models\GatewayLogRejection;
 use App\Models\LogSource;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use InvalidArgumentException;
 use RuntimeException;
@@ -343,6 +344,42 @@ final class GatewayLogImporterTest extends TestCase
         $source = LogSource::query()->sole();
         self::assertSame(4, $source->last_processed_line);
         self::assertSame(filesize($path), $source->last_processed_offset);
+    }
+
+    public function test_it_rolls_back_and_resumes_after_a_database_failure_during_a_batch(): void
+    {
+        $lineCount = 6_554;
+        $line = rtrim($this->fixture('valid-seconds.ndjson'), "\r\n").PHP_EOL;
+        $path = $this->createRawLogFile(str_repeat($line, $lineCount));
+
+        try {
+            $this->importer->import($path, batchSize: $lineCount);
+            self::fail('O lote acima do limite de placeholders deveria falhar no MySQL.');
+        } catch (QueryException $failure) {
+            self::assertStringContainsString(
+                'Prepared statement contains too many placeholders',
+                $failure->getMessage(),
+            );
+        }
+
+        $this->assertDatabaseCount('gateway_logs', 0);
+        $this->assertDatabaseCount('gateway_log_rejections', 0);
+
+        $source = LogSource::query()->sole();
+        self::assertSame(0, $source->last_processed_offset);
+        self::assertSame(0, $source->last_processed_line);
+        self::assertSame(hash('sha256', ''), $source->processed_prefix_hash);
+
+        $result = $this->importer->import($path, batchSize: 1_000);
+
+        self::assertSame($lineCount, $result->importedRecords);
+        self::assertSame(0, $result->rejectedRecords);
+        $this->assertDatabaseCount('gateway_logs', $lineCount);
+
+        $source->refresh();
+        self::assertSame(filesize($path), $source->last_processed_offset);
+        self::assertSame($lineCount, $source->last_processed_line);
+        self::assertSame(hash_file('sha256', $path), $source->processed_prefix_hash);
     }
 
     public function test_unsupported_timestamps_are_rejected_without_aborting_the_batch(): void

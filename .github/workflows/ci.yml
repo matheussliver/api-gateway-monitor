@@ -1,0 +1,52 @@
+name: Integração contínua
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Estilo, testes e cobertura
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Preparar o ambiente
+        run: cp .env.example .env
+
+      - name: Construir a imagem da aplicação
+        run: docker compose build app
+
+      - name: Instalar as dependências
+        run: |
+          docker compose run --rm --no-deps \
+            --user "$(id -u):$(id -g)" \
+            -e COMPOSER_HOME=/tmp/composer \
+            --entrypoint composer \
+            app install --no-interaction --prefer-dist
+
+      - name: Iniciar a stack
+        run: docker compose up -d --wait
+
+      - name: Validar o Composer
+        run: docker compose exec -T --user "$(id -u):$(id -g)" app composer validate --strict
+
+      - name: Validar o estilo
+        run: docker compose exec -T --user "$(id -u):$(id -g)" app vendor/bin/pint --test
+
+      - name: Executar os testes com cobertura mínima
+        run: docker compose exec -T --user "$(id -u):$(id -g)" app composer test:coverage
+
+      - name: Exibir logs em caso de falha
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Encerrar a stack
+        if: always()
+        run: docker compose down -v
