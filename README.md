@@ -41,6 +41,10 @@ O arquivo real possui duas diferenças em relação ao payload de referência da
 
 Linhas vazias, JSON malformado, UUID inválido, campos ausentes, tipos incorretos e latências negativas são rejeitados individualmente. Cada rejeição é persistida com fonte, linha, byte, motivo e horário do processamento; os registros seguintes continuam sendo examinados. Logs válidos e rejeições são confirmados na mesma transação do checkpoint.
 
+Cada linha NDJSON completa pode ocupar no máximo 1 MiB (`1.048.576` bytes),
+incluindo o `LF`. Linhas maiores são consumidas em blocos limitados, registradas
+como uma única rejeição e não impedem o processamento das linhas seguintes.
+
 A unidade de `started_at` é identificada por duas faixas numéricas disjuntas:
 de `946.684.800` a `4.102.444.799` para segundos e de `946.684.800.000` a
 `4.102.444.799.999` para milissegundos. Valores fora dessas faixas são
@@ -162,6 +166,7 @@ Ao executar novamente o comando:
 - Arquivo inalterado: zero inserções;
 - Linhas adicionadas: somente o novo trecho é processado;
 - Linha final sem `LF`: permanece pendente até ser concluída;
+- Linha maior que 1 MiB: é rejeitada sem interromper as linhas seguintes;
 - Arquivo truncado: a execução é recusada;
 - Prefixo já processado alterado: a execução é recusada;
 - Mesma fonte em duas execuções simultâneas: a segunda é recusada;

@@ -18,6 +18,8 @@ final class GatewayLogImporter
 {
     private const int HASH_READ_CHUNK_SIZE = 1_048_576;
 
+    private const int MAX_NDJSON_LINE_BYTES = 1_048_576;
+
     public function __construct(
         private readonly NdjsonLineParser $parser,
         private readonly GatewayLogNormalizer $normalizer,
@@ -105,7 +107,9 @@ final class GatewayLogImporter
 
         while ($currentOffset < $fileSize) {
             $lineOffset = $currentOffset;
-            $line = fgets($handle);
+            $lineHashContext = hash_copy($prefixHashContext);
+            $lineTooLarge = false;
+            $line = fgets($handle, self::MAX_NDJSON_LINE_BYTES + 1);
 
             if ($line === false) {
                 throw new InvalidLogFile("Não foi possível ler o byte [$lineOffset] de [$path].");
@@ -117,16 +121,39 @@ final class GatewayLogImporter
                 throw new InvalidLogFile("Não foi possível determinar o byte atual em [$path].");
             }
 
+            while (! str_ends_with($line, "\n") && $currentOffset < $fileSize) {
+                $lineTooLarge = true;
+                hash_update($lineHashContext, $line);
+                $line = fgets($handle, self::MAX_NDJSON_LINE_BYTES + 1);
+
+                if ($line === false) {
+                    throw new InvalidLogFile("Não foi possível ler o byte [$currentOffset] de [$path].");
+                }
+
+                $currentOffset = ftell($handle);
+
+                if ($currentOffset === false) {
+                    throw new InvalidLogFile("Não foi possível determinar o byte atual em [$path].");
+                }
+            }
+
             if ($currentOffset >= $fileSize && ! str_ends_with($line, "\n")) {
                 $currentOffset = $lineOffset;
 
                 break;
             }
 
-            hash_update($prefixHashContext, $line);
+            hash_update($lineHashContext, $line);
+            $prefixHashContext = $lineHashContext;
             $currentLine++;
 
             try {
+                if ($lineTooLarge) {
+                    throw new InvalidNdjsonLine(
+                        'A linha NDJSON excede o limite de '.self::MAX_NDJSON_LINE_BYTES.' bytes.',
+                    );
+                }
+
                 $data = $this->normalizer->normalize($this->parser->parse($line));
             } catch (InvalidNdjsonLine|InvalidGatewayLogRecord $failure) {
                 $rejections[] = [

@@ -21,6 +21,8 @@ final class GatewayLogImporterTest extends TestCase
 {
     use RefreshDatabase;
 
+    private const int MAX_NDJSON_LINE_BYTES = 1_048_576;
+
     private GatewayLogImporter $importer;
 
     /** @var list<string> */
@@ -152,6 +154,95 @@ final class GatewayLogImporterTest extends TestCase
         $source->refresh();
         self::assertSame(filesize($path), $source->last_processed_offset);
         self::assertSame(1, $source->last_processed_line);
+    }
+
+    public function test_it_accepts_the_line_size_limit_and_rejects_the_next_byte_without_stopping(): void
+    {
+        $maximumLine = $this->recordWithEncodedSize(
+            self::MAX_NDJSON_LINE_BYTES - strlen(PHP_EOL),
+        );
+        $oversizedLine = $this->recordWithEncodedSize(
+            self::MAX_NDJSON_LINE_BYTES - strlen(PHP_EOL) + 1,
+        );
+        $path = $this->createLogFile([
+            $maximumLine,
+            $oversizedLine,
+            $this->fixture('valid-milliseconds.ndjson'),
+        ]);
+
+        $result = $this->importer->import($path, batchSize: 100);
+
+        self::assertSame(2, $result->importedRecords);
+        self::assertSame(1, $result->rejectedRecords);
+        $this->assertDatabaseCount('gateway_logs', 2);
+        $this->assertDatabaseCount('gateway_log_rejections', 1);
+
+        $rejection = GatewayLogRejection::query()->sole();
+        self::assertSame(2, $rejection->source_line);
+        self::assertStringContainsString('excede o limite de 1048576 bytes', $rejection->reason);
+
+        $source = LogSource::query()->sole();
+        self::assertSame(3, $source->last_processed_line);
+        self::assertSame(filesize($path), $source->last_processed_offset);
+        self::assertSame(hash_file('sha256', $path), $source->processed_prefix_hash);
+    }
+
+    public function test_it_defers_an_oversized_unterminated_line_before_rejecting_it(): void
+    {
+        $oversizedLine = $this->recordWithEncodedSize((self::MAX_NDJSON_LINE_BYTES * 2) + 1);
+        $path = $this->createRawLogFile($oversizedLine);
+
+        $partialResult = $this->importer->import($path);
+
+        self::assertSame(0, $partialResult->importedRecords);
+        self::assertSame(0, $partialResult->rejectedRecords);
+        self::assertSame(0, $partialResult->endOffset);
+        self::assertSame(0, $partialResult->endLine);
+        $this->assertDatabaseCount('gateway_logs', 0);
+        $this->assertDatabaseCount('gateway_log_rejections', 0);
+
+        file_put_contents(
+            $path,
+            PHP_EOL.rtrim($this->fixture('valid-milliseconds.ndjson'), "\r\n").PHP_EOL,
+            FILE_APPEND,
+        );
+
+        $completedResult = $this->importer->import($path);
+
+        self::assertSame(1, $completedResult->importedRecords);
+        self::assertSame(1, $completedResult->rejectedRecords);
+        self::assertSame(2, $completedResult->endLine);
+        $this->assertDatabaseCount('gateway_logs', 1);
+        $this->assertDatabaseCount('gateway_log_rejections', 1);
+        self::assertStringContainsString(
+            'excede o limite de 1048576 bytes',
+            GatewayLogRejection::query()->sole()->reason,
+        );
+
+        $source = LogSource::query()->sole();
+        self::assertSame(filesize($path), $source->last_processed_offset);
+        self::assertSame(hash_file('sha256', $path), $source->processed_prefix_hash);
+    }
+
+    public function test_it_discards_an_oversized_line_with_bounded_memory(): void
+    {
+        $oversizedLine = $this->recordWithEncodedSize(self::MAX_NDJSON_LINE_BYTES * 16);
+        $path = $this->createLogFile([$oversizedLine]);
+
+        unset($oversizedLine);
+        gc_collect_cycles();
+        memory_reset_peak_usage();
+        $memoryBeforeImport = memory_get_usage();
+
+        $result = $this->importer->import($path);
+
+        $additionalPeakMemory = memory_get_peak_usage() - $memoryBeforeImport;
+
+        self::assertSame(0, $result->importedRecords);
+        self::assertSame(1, $result->rejectedRecords);
+        self::assertLessThan(8 * 1024 * 1024, $additionalPeakMemory);
+        $this->assertDatabaseCount('gateway_logs', 0);
+        $this->assertDatabaseCount('gateway_log_rejections', 1);
     }
 
     public function test_an_invalid_line_is_rejected_without_stopping_later_records(): void
@@ -477,6 +568,23 @@ final class GatewayLogImporterTest extends TestCase
     private function encodeRecord(array $record): string
     {
         return json_encode($record, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+    }
+
+    private function recordWithEncodedSize(int $targetBytes): string
+    {
+        $record = $this->recordFromFixture('valid-seconds.ndjson');
+        $record['padding'] = '';
+        $emptyPaddingRecord = $this->encodeRecord($record);
+        $paddingBytes = $targetBytes - strlen($emptyPaddingRecord);
+
+        self::assertGreaterThanOrEqual(0, $paddingBytes);
+
+        $record['padding'] = str_repeat('x', $paddingBytes);
+        $encodedRecord = $this->encodeRecord($record);
+
+        self::assertSame($targetBytes, strlen($encodedRecord));
+
+        return $encodedRecord;
     }
 
     private function linesToContents(array $lines): string
