@@ -253,6 +253,40 @@ final class GatewayLogImporterTest extends TestCase
         self::assertSame(filesize($path), $source->last_processed_offset);
     }
 
+    public function test_unsupported_timestamps_are_rejected_without_aborting_the_batch(): void
+    {
+        $ambiguousTimestamp = $this->recordFromFixture('valid-seconds.ndjson');
+        $ambiguousTimestamp['started_at'] = 31_536_000_000;
+        $extremeTimestamp = $this->recordFromFixture('valid-seconds.ndjson');
+        $extremeTimestamp['started_at'] = PHP_INT_MAX;
+
+        $path = $this->createLogFile([
+            $this->fixture('valid-seconds.ndjson'),
+            $this->encodeRecord($ambiguousTimestamp),
+            $this->encodeRecord($extremeTimestamp),
+            $this->fixture('valid-milliseconds.ndjson'),
+        ]);
+
+        $result = $this->importer->import($path, batchSize: 100);
+
+        self::assertSame(2, $result->importedRecords);
+        self::assertSame(2, $result->rejectedRecords);
+        $this->assertDatabaseCount('gateway_logs', 2);
+        $this->assertDatabaseCount('gateway_log_rejections', 2);
+
+        $rejections = GatewayLogRejection::query()->orderBy('source_line')->get();
+        self::assertSame(2, $rejections[0]->source_line);
+        self::assertStringContainsString('started_at', $rejections[0]->reason);
+        self::assertStringContainsString('entre 2000-01-01 e 2099-12-31 UTC', $rejections[0]->reason);
+        self::assertSame(3, $rejections[1]->source_line);
+        self::assertStringContainsString('started_at', $rejections[1]->reason);
+        self::assertStringContainsString('entre 2000-01-01 e 2099-12-31 UTC', $rejections[1]->reason);
+
+        $source = LogSource::query()->sole();
+        self::assertSame(4, $source->last_processed_line);
+        self::assertSame(filesize($path), $source->last_processed_offset);
+    }
+
     public function test_reimporting_a_file_with_a_rejection_does_not_duplicate_any_result(): void
     {
         $path = $this->createLogFile([

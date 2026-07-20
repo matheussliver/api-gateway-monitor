@@ -49,6 +49,56 @@ final class GatewayLogNormalizerTest extends TestCase
         self::assertSame(0, $data->latencyRequest);
     }
 
+    #[DataProvider('supportedTimestampBoundaryProvider')]
+    public function test_it_accepts_timestamps_at_the_supported_boundaries(
+        int $startedAt,
+        int $expectedTimestampMs,
+    ): void {
+        $record = (new NdjsonLineParser)->parse($this->fixture('valid-seconds.ndjson'));
+        $record['started_at'] = $startedAt;
+
+        $data = (new GatewayLogNormalizer)->normalize($record);
+
+        self::assertSame($expectedTimestampMs, $data->createdAt->getTimestampMs());
+    }
+
+    /**
+     * @return iterable<string, array{int, int}>
+     */
+    public static function supportedTimestampBoundaryProvider(): iterable
+    {
+        yield 'minimum in seconds' => [946_684_800, 946_684_800_000];
+        yield 'maximum in seconds' => [4_102_444_799, 4_102_444_799_000];
+        yield 'minimum in milliseconds' => [946_684_800_000, 946_684_800_000];
+        yield 'maximum in milliseconds' => [4_102_444_799_999, 4_102_444_799_999];
+    }
+
+    #[DataProvider('unsupportedTimestampProvider')]
+    public function test_it_rejects_timestamps_outside_the_supported_period(int $startedAt): void
+    {
+        $record = (new NdjsonLineParser)->parse($this->fixture('valid-seconds.ndjson'));
+        $record['started_at'] = $startedAt;
+
+        $this->expectException(InvalidGatewayLogRecord::class);
+        $this->expectExceptionMessage('started_at');
+        $this->expectExceptionMessage('entre 2000-01-01 e 2099-12-31 UTC');
+
+        (new GatewayLogNormalizer)->normalize($record);
+    }
+
+    /**
+     * @return iterable<string, array{int}>
+     */
+    public static function unsupportedTimestampProvider(): iterable
+    {
+        yield 'before minimum in seconds' => [946_684_799];
+        yield 'after maximum in seconds' => [4_102_444_800];
+        yield 'ambiguous eleven digit value' => [31_536_000_000];
+        yield 'before minimum in milliseconds' => [946_684_799_999];
+        yield 'after maximum in milliseconds' => [4_102_444_800_000];
+        yield 'maximum PHP integer' => [PHP_INT_MAX];
+    }
+
     public function test_it_accepts_values_at_the_database_limits(): void
     {
         $record = (new NdjsonLineParser)->parse($this->fixture('valid-seconds.ndjson'));

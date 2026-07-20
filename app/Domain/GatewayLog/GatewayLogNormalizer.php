@@ -9,7 +9,13 @@ use Illuminate\Support\Str;
 
 final class GatewayLogNormalizer
 {
-    private const int MILLISECOND_TIMESTAMP_THRESHOLD = 100_000_000_000;
+    private const int MIN_TIMESTAMP_SECONDS = 946_684_800;
+
+    private const int MAX_TIMESTAMP_SECONDS = 4_102_444_799;
+
+    private const int MIN_TIMESTAMP_MILLISECONDS = 946_684_800_000;
+
+    private const int MAX_TIMESTAMP_MILLISECONDS = 4_102_444_799_999;
 
     private const int MAX_SERVICE_NAME_LENGTH = 255;
 
@@ -36,11 +42,7 @@ final class GatewayLogNormalizer
         $latencyProxy = $this->requireLatency($record, 'latencies.proxy');
         $latencyGateway = $this->requireLatency($record, 'latencies.gateway');
         $latencyRequest = $this->requireLatency($record, 'latencies.request');
-        $startedAt = $this->requireNonNegativeInteger($record, 'started_at');
-
-        $createdAt = $startedAt >= self::MILLISECOND_TIMESTAMP_THRESHOLD
-            ? CarbonImmutable::createFromTimestampMs($startedAt, 'UTC')
-            : CarbonImmutable::createFromTimestamp($startedAt, 'UTC');
+        $createdAt = $this->requireStartedAt($record);
 
         return new GatewayLogData(
             consumerId: $consumerId,
@@ -114,6 +116,32 @@ final class GatewayLogNormalizer
         }
 
         return $value;
+    }
+
+    /**
+     * @param  array<string, mixed>  $record
+     */
+    private function requireStartedAt(array $record): CarbonImmutable
+    {
+        $path = 'started_at';
+        $value = $this->requireNonNegativeInteger($record, $path);
+
+        if ($value >= self::MIN_TIMESTAMP_SECONDS && $value <= self::MAX_TIMESTAMP_SECONDS) {
+            return CarbonImmutable::createFromTimestamp($value, 'UTC');
+        }
+
+        if (
+            $value >= self::MIN_TIMESTAMP_MILLISECONDS
+            && $value <= self::MAX_TIMESTAMP_MILLISECONDS
+        ) {
+            return CarbonImmutable::createFromTimestampMs($value, 'UTC');
+        }
+
+        throw InvalidGatewayLogRecord::forField(
+            $path,
+            'deve representar uma data entre 2000-01-01 e 2099-12-31 UTC '
+            .'em segundos ou milissegundos Unix',
+        );
     }
 
     /**

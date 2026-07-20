@@ -36,10 +36,16 @@ O arquivo real possui duas diferenças em relação ao payload de referência da
 | `latencies.request` | `latency_request` | Inteiro entre 0 e 4.294.967.295 |
 | `latencies.proxy` | `latency_proxy` | Inteiro entre 0 e 4.294.967.295 |
 | `latencies.gateway` | `latency_gateway` | Inteiro entre 0 e 4.294.967.295 |
-| `started_at` | `created_at` | Timestamp Unix em segundos ou milissegundos, convertido para UTC |
+| `started_at` | `created_at` | Timestamp Unix inteiro em segundos ou milissegundos, entre 2000-01-01 e 2099-12-31 UTC |
 | Momento da inserção | `processed_at` | Gerado em UTC para cada lote persistido |
 
 Linhas vazias, JSON malformado, UUID inválido, campos ausentes, tipos incorretos e latências negativas são rejeitados individualmente. Cada rejeição é persistida com fonte, linha, byte, motivo e horário do processamento; os registros seguintes continuam sendo examinados. Logs válidos e rejeições são confirmados na mesma transação do checkpoint.
+
+A unidade de `started_at` é identificada por duas faixas numéricas disjuntas:
+de `946.684.800` a `4.102.444.799` para segundos e de `946.684.800.000` a
+`4.102.444.799.999` para milissegundos. Valores fora dessas faixas são
+rejeitados, evitando datas silenciosamente corrompidas ou incompatíveis com o
+banco.
 
 Uma linha somente é considerada completa quando termina com `LF` (`\n`). Se o
 arquivo terminar no meio de uma linha, esse segmento final não é rejeitado nem
