@@ -8,7 +8,9 @@ use App\Application\Reports\GatewayLogReportGenerator;
 use App\Models\GatewayLog;
 use App\Models\LogSource;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
@@ -183,6 +185,81 @@ CSV, file_get_contents($result->averageLatencyByServicePath));
             ],
             array_values(array_diff(scandir($directory) ?: [], ['.', '..'])),
         );
+    }
+
+    public function test_all_reports_use_the_same_snapshot_during_a_concurrent_insert(): void
+    {
+        $source = $this->createSource();
+        $this->createLog($source, 0, '11111111-1111-3111-8111-111111111111', 'alpha', 50, 10, 100);
+        $directory = $this->temporaryDirectory();
+        $connection = DB::connection();
+        $dispatcher = $connection->getEventDispatcher();
+
+        self::assertNotNull($dispatcher);
+
+        $connection->commit();
+        $connection->statement('SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED');
+
+        try {
+            $concurrentConnectionName = 'mysql_report_concurrent';
+            $concurrentConfiguration = config('database.connections.mysql');
+
+            self::assertIsArray($concurrentConfiguration);
+            config(["database.connections.$concurrentConnectionName" => $concurrentConfiguration]);
+
+            $concurrentConnection = DB::connection($concurrentConnectionName);
+            $concurrentInsertCompleted = false;
+
+            $dispatcher->listen(
+                QueryExecuted::class,
+                function (QueryExecuted $query) use (
+                    &$concurrentInsertCompleted,
+                    $concurrentConnection,
+                    $source,
+                ): void {
+                    if (
+                        $concurrentInsertCompleted
+                        || $query->connectionName !== 'mysql'
+                        || ! str_contains($query->sql, 'COUNT(*) AS total_requests')
+                        || ! str_contains($query->sql, '`consumer_id`')
+                    ) {
+                        return;
+                    }
+
+                    $concurrentInsertCompleted = true;
+                    $concurrentConnection->table('gateway_logs')->insert([
+                        'log_source_id' => $source->id,
+                        'source_offset' => 100,
+                        'source_line' => 2,
+                        'consumer_id' => '22222222-2222-3222-8222-222222222222',
+                        'service_name' => 'beta',
+                        'latency_proxy' => 90,
+                        'latency_gateway' => 30,
+                        'latency_request' => 300,
+                        'created_at' => '2019-08-24 15:27:27.000',
+                        'processed_at' => '2026-07-17 18:31:45.456',
+                    ]);
+                },
+            );
+
+            $result = $this->generator()->generate($directory);
+
+            self::assertTrue($concurrentInsertCompleted);
+            self::assertSame(1, $result->consumerRows);
+            self::assertSame(1, $result->serviceRows);
+            self::assertSame(1, $result->latencyRows);
+            self::assertStringNotContainsString('beta', file_get_contents($result->requestsByServicePath));
+            self::assertStringNotContainsString('beta', file_get_contents($result->averageLatencyByServicePath));
+            $this->assertDatabaseCount('gateway_logs', 2);
+        } finally {
+            $dispatcher->forget(QueryExecuted::class);
+            DB::purge('mysql_report_concurrent');
+            config()->offsetUnset('database.connections.mysql_report_concurrent');
+            $connection->table('gateway_logs')->delete();
+            $connection->table('log_sources')->delete();
+            $connection->statement('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+            $connection->beginTransaction();
+        }
     }
 
     private function generator(): GatewayLogReportGenerator

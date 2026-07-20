@@ -193,6 +193,11 @@ de carro recebem um apóstrofo apenas na exportação. A mesma proteção vale q
 o marcador de fórmula aparece depois de espaços. O valor persistido no banco não
 é modificado.
 
+As três consultas são executadas em uma única transação de leitura com
+isolamento `REPEATABLE READ`. O primeiro relatório estabelece o snapshot usado
+pelos demais; logs confirmados por uma importação concorrente aparecem somente
+na próxima geração, evitando totais referentes a instantes diferentes.
+
 Também é possível informar outro diretório dentro do container:
 
 ```bash
