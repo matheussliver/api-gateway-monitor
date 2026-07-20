@@ -32,7 +32,7 @@ O arquivo real possui duas diferenças em relação ao payload de referência da
 | Origem no NDJSON | Destino | Regra |
 | --- | --- | --- |
 | `authenticated_entity.consumer_id` ou `.consumer_id.uuid` | `consumer_id` | UUID obrigatório |
-| `service.name` | `service_name` | Texto não vazio com até 255 caracteres |
+| `service.name` | `service_name` | Texto não vazio com até 255 caracteres; diferencia maiúsculas, minúsculas e acentos |
 | `latencies.request` | `latency_request` | Inteiro entre 0 e 4.294.967.295 |
 | `latencies.proxy` | `latency_proxy` | Inteiro entre 0 e 4.294.967.295 |
 | `latencies.gateway` | `latency_gateway` | Inteiro entre 0 e 4.294.967.295 |
@@ -183,6 +183,9 @@ Por padrão, os arquivos são gravados em `storage/app/reports`:
 - `requests_by_consumer.csv` — total de requisições por `consumer_id`;
 - `requests_by_service.csv` — total de requisições por serviço;
 - `average_latency_by_service.csv` — médias de `request`, `proxy` e `gateway` por serviço.
+
+Os agrupamentos por serviço preservam o nome recebido: por exemplo, `Billing`
+e `billing` aparecem como serviços distintos.
 
 Também é possível informar outro diretório dentro do container:
 

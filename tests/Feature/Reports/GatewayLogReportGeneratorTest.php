@@ -97,6 +97,33 @@ CSV, file_get_contents($result->averageLatencyByServicePath));
         );
     }
 
+    public function test_it_groups_service_names_case_sensitively(): void
+    {
+        $source = $this->createSource();
+        $this->createLog($source, 0, '11111111-1111-3111-8111-111111111111', 'Billing', 50, 10, 100);
+        $this->createLog($source, 100, '11111111-1111-3111-8111-111111111111', 'billing', 90, 30, 300);
+        $this->createLog($source, 200, '11111111-1111-3111-8111-111111111111', 'bílling', 70, 20, 200);
+
+        $result = $this->generator()->generate($this->temporaryDirectory());
+
+        self::assertSame(3, $result->serviceRows);
+        self::assertSame(3, $result->latencyRows);
+        self::assertSame(<<<'CSV'
+service_name,total_requests
+billing,1
+Billing,1
+bílling,1
+
+CSV, file_get_contents($result->requestsByServicePath));
+        self::assertSame(<<<'CSV'
+service_name,average_request_latency,average_proxy_latency,average_gateway_latency
+billing,300.00,90.00,30.00
+Billing,100.00,50.00,10.00
+bílling,200.00,70.00,20.00
+
+CSV, file_get_contents($result->averageLatencyByServicePath));
+    }
+
     public function test_regeneration_atomically_replaces_existing_report_files(): void
     {
         $source = $this->createSource();
