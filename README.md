@@ -187,6 +187,12 @@ Por padrão, os arquivos são gravados em `storage/app/reports`:
 Os agrupamentos por serviço preservam o nome recebido: por exemplo, `Billing`
 e `billing` aparecem como serviços distintos.
 
+Para impedir execução de fórmulas ao abrir os arquivos em aplicativos de
+planilha, campos textuais iniciados por `=`, `+`, `-`, `@`, tabulação ou retorno
+de carro recebem um apóstrofo apenas na exportação. A mesma proteção vale quando
+o marcador de fórmula aparece depois de espaços. O valor persistido no banco não
+é modificado.
+
 Também é possível informar outro diretório dentro do container:
 
 ```bash

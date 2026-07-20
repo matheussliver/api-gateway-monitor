@@ -10,6 +10,7 @@ use App\Models\LogSource;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\File;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 final class GatewayLogReportGeneratorTest extends TestCase
@@ -122,6 +123,45 @@ Billing,100.00,50.00,10.00
 bílling,200.00,70.00,20.00
 
 CSV, file_get_contents($result->averageLatencyByServicePath));
+    }
+
+    #[DataProvider('spreadsheetFormulaProvider')]
+    public function test_it_neutralizes_spreadsheet_formulas_in_text_fields(string $serviceName): void
+    {
+        $source = $this->createSource();
+        $this->createLog(
+            $source,
+            0,
+            '11111111-1111-3111-8111-111111111111',
+            $serviceName,
+            50,
+            10,
+            100,
+        );
+
+        $result = $this->generator()->generate($this->temporaryDirectory());
+        $rows = array_map(
+            static fn (string $line): array => str_getcsv($line, ',', '"', ''),
+            file($result->requestsByServicePath, FILE_IGNORE_NEW_LINES) ?: [],
+        );
+
+        self::assertSame(['service_name', 'total_requests'], $rows[0]);
+        self::assertSame("'$serviceName", $rows[1][0]);
+        self::assertSame('1', $rows[1][1]);
+        self::assertSame($serviceName, GatewayLog::query()->sole()->service_name);
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function spreadsheetFormulaProvider(): iterable
+    {
+        yield 'equals sign' => ['=1+1'];
+        yield 'plus sign' => ['+1+1'];
+        yield 'minus sign' => ['-1+1'];
+        yield 'at sign' => ['@SUM(A1:A2)'];
+        yield 'leading tab' => ["\ttexto"];
+        yield 'formula after spaces' => ['  =1+1'];
     }
 
     public function test_regeneration_atomically_replaces_existing_report_files(): void

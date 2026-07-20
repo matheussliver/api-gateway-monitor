@@ -210,8 +210,22 @@ final class GatewayLogReportGenerator
      */
     private function writeCsvRow($stream, array $fields, string $path): void
     {
-        if (fputcsv($stream, $fields, ',', '"', '', "\n") === false) {
+        $safeFields = array_map(
+            $this->neutralizeSpreadsheetFormula(...),
+            $fields,
+        );
+
+        if (fputcsv($stream, $safeFields, ',', '"', '', "\n") === false) {
             throw new ReportGenerationException("Não foi possível escrever no relatório [$path].");
         }
+    }
+
+    private function neutralizeSpreadsheetFormula(string $field): string
+    {
+        if (preg_match('/^(?:[\t\r]|[\p{Z}\x00-\x20]*[=+\-@])/u', $field) === 1) {
+            return "'$field";
+        }
+
+        return $field;
     }
 }
