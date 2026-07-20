@@ -1,0 +1,61 @@
+name: api-gateway-monitor
+
+services:
+  app:
+    image: serversideup/php:8.4-fpm-nginx
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    environment:
+      APP_ENV: local
+      APP_DEBUG: "true"
+      APP_URL: "http://localhost:${APP_PORT:-8080}"
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_DATABASE: "${DB_DATABASE:-gateway_logs}"
+      DB_TEST_DATABASE: "${DB_TEST_DATABASE:-gateway_logs_test}"
+      DB_USERNAME: "${DB_USERNAME:-gateway_user}"
+      DB_PASSWORD: "${DB_PASSWORD:-gateway_password}"
+      PHP_OPCACHE_ENABLE: "0"
+      AUTORUN_ENABLED: "false"
+    volumes:
+      - ./:/var/www/html
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - gateway-network
+
+  mysql:
+    image: mysql:8.4
+    ports:
+      - "${DB_FORWARD_PORT:-3306}:3306"
+    environment:
+      MYSQL_DATABASE: "${DB_DATABASE:-gateway_logs}"
+      MYSQL_TEST_DATABASE: "${DB_TEST_DATABASE:-gateway_logs_test}"
+      MYSQL_USER: "${DB_USERNAME:-gateway_user}"
+      MYSQL_PASSWORD: "${DB_PASSWORD:-gateway_password}"
+      MYSQL_ROOT_PASSWORD: "${DB_ROOT_PASSWORD:-root_password}"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - mysqladmin ping -h 127.0.0.1 -u root -p"$${MYSQL_ROOT_PASSWORD}" --silent
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - gateway-network
+
+networks:
+  gateway-network:
+    driver: bridge
+
+volumes:
+  mysql-data:
