@@ -15,7 +15,7 @@ jobs:
 
     steps:
       - name: Baixar o código
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Preparar o ambiente
         run: cp .env.example .env
@@ -33,6 +33,9 @@ jobs:
 
       - name: Iniciar a stack
         run: docker compose up -d --wait
+
+      - name: Gerar a chave da aplicação
+        run: docker compose exec -T --user "$(id -u):$(id -g)" app php artisan key:generate --force
 
       - name: Validar o Composer
         run: docker compose exec -T --user "$(id -u):$(id -g)" app composer validate --strict
