@@ -49,6 +49,46 @@ final class GatewayLogNormalizerTest extends TestCase
         self::assertSame(0, $data->latencyRequest);
     }
 
+    public function test_it_accepts_values_at_the_database_limits(): void
+    {
+        $record = (new NdjsonLineParser)->parse($this->fixture('valid-seconds.ndjson'));
+        $record['service']['name'] = str_repeat('á', 255);
+        $record['latencies']['proxy'] = 4_294_967_295;
+        $record['latencies']['gateway'] = 4_294_967_295;
+        $record['latencies']['request'] = 4_294_967_295;
+
+        $data = (new GatewayLogNormalizer)->normalize($record);
+
+        self::assertSame(str_repeat('á', 255), $data->serviceName);
+        self::assertSame(4_294_967_295, $data->latencyProxy);
+        self::assertSame(4_294_967_295, $data->latencyGateway);
+        self::assertSame(4_294_967_295, $data->latencyRequest);
+    }
+
+    public function test_it_rejects_a_service_name_above_the_database_limit(): void
+    {
+        $record = (new NdjsonLineParser)->parse($this->fixture('valid-seconds.ndjson'));
+        $record['service']['name'] = str_repeat('a', 256);
+
+        $this->expectException(InvalidGatewayLogRecord::class);
+        $this->expectExceptionMessage('service.name');
+        $this->expectExceptionMessage('no máximo 255 caracteres');
+
+        (new GatewayLogNormalizer)->normalize($record);
+    }
+
+    public function test_it_rejects_a_latency_above_the_database_limit(): void
+    {
+        $record = (new NdjsonLineParser)->parse($this->fixture('valid-seconds.ndjson'));
+        $record['latencies']['request'] = 4_294_967_296;
+
+        $this->expectException(InvalidGatewayLogRecord::class);
+        $this->expectExceptionMessage('latencies.request');
+        $this->expectExceptionMessage('no máximo 4294967295');
+
+        (new GatewayLogNormalizer)->normalize($record);
+    }
+
     #[DataProvider('invalidRecordProvider')]
     public function test_it_rejects_invalid_or_incomplete_records(string $fixture, string $field): void
     {

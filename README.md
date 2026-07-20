@@ -32,10 +32,10 @@ O arquivo real possui duas diferenças em relação ao payload de referência da
 | Origem no NDJSON | Destino | Regra |
 | --- | --- | --- |
 | `authenticated_entity.consumer_id` ou `.consumer_id.uuid` | `consumer_id` | UUID obrigatório |
-| `service.name` | `service_name` | Texto não vazio |
-| `latencies.request` | `latency_request` | Inteiro não negativo |
-| `latencies.proxy` | `latency_proxy` | Inteiro não negativo |
-| `latencies.gateway` | `latency_gateway` | Inteiro não negativo |
+| `service.name` | `service_name` | Texto não vazio com até 255 caracteres |
+| `latencies.request` | `latency_request` | Inteiro entre 0 e 4.294.967.295 |
+| `latencies.proxy` | `latency_proxy` | Inteiro entre 0 e 4.294.967.295 |
+| `latencies.gateway` | `latency_gateway` | Inteiro entre 0 e 4.294.967.295 |
 | `started_at` | `created_at` | Timestamp Unix em segundos ou milissegundos, convertido para UTC |
 | Momento da inserção | `processed_at` | Gerado em UTC para cada lote persistido |
 

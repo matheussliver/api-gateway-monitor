@@ -207,6 +207,52 @@ final class GatewayLogImporterTest extends TestCase
         self::assertSame(filesize($path), $source->last_processed_offset);
     }
 
+    public function test_values_above_the_database_limits_are_rejected_without_aborting_the_batch(): void
+    {
+        $validLine = $this->fixture('valid-seconds.ndjson');
+        $oversizedService = $this->recordFromFixture('valid-seconds.ndjson');
+        $oversizedService['service']['name'] = str_repeat('a', 256);
+        $oversizedLatency = $this->recordFromFixture('valid-seconds.ndjson');
+        $oversizedLatency['latencies']['gateway'] = 4_294_967_296;
+        $boundaryRecord = $this->recordFromFixture('valid-seconds.ndjson');
+        $boundaryRecord['service']['name'] = str_repeat('á', 255);
+        $boundaryRecord['latencies']['proxy'] = 4_294_967_295;
+        $boundaryRecord['latencies']['gateway'] = 4_294_967_295;
+        $boundaryRecord['latencies']['request'] = 4_294_967_295;
+
+        $path = $this->createLogFile([
+            $validLine,
+            $this->encodeRecord($oversizedService),
+            $this->encodeRecord($oversizedLatency),
+            $this->encodeRecord($boundaryRecord),
+        ]);
+
+        $result = $this->importer->import($path, batchSize: 100);
+
+        self::assertSame(2, $result->importedRecords);
+        self::assertSame(2, $result->rejectedRecords);
+        $this->assertDatabaseCount('gateway_logs', 2);
+        $this->assertDatabaseCount('gateway_log_rejections', 2);
+
+        $rejections = GatewayLogRejection::query()->orderBy('source_line')->get();
+        self::assertSame(2, $rejections[0]->source_line);
+        self::assertStringContainsString('service.name', $rejections[0]->reason);
+        self::assertStringContainsString('no máximo 255 caracteres', $rejections[0]->reason);
+        self::assertSame(3, $rejections[1]->source_line);
+        self::assertStringContainsString('latencies.gateway', $rejections[1]->reason);
+        self::assertStringContainsString('no máximo 4294967295', $rejections[1]->reason);
+
+        $persistedBoundary = GatewayLog::query()->where('source_line', 4)->sole();
+        self::assertSame(str_repeat('á', 255), $persistedBoundary->service_name);
+        self::assertSame(4_294_967_295, $persistedBoundary->latency_proxy);
+        self::assertSame(4_294_967_295, $persistedBoundary->latency_gateway);
+        self::assertSame(4_294_967_295, $persistedBoundary->latency_request);
+
+        $source = LogSource::query()->sole();
+        self::assertSame(4, $source->last_processed_line);
+        self::assertSame(filesize($path), $source->last_processed_offset);
+    }
+
     public function test_reimporting_a_file_with_a_rejection_does_not_duplicate_any_result(): void
     {
         $path = $this->createLogFile([
@@ -316,6 +362,26 @@ final class GatewayLogImporterTest extends TestCase
     private function appendLines(string $path, array $lines): void
     {
         file_put_contents($path, $this->linesToContents($lines), FILE_APPEND);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function recordFromFixture(string $name): array
+    {
+        $record = json_decode($this->fixture($name), true, flags: JSON_THROW_ON_ERROR);
+
+        self::assertIsArray($record);
+
+        return $record;
+    }
+
+    /**
+     * @param  array<string, mixed>  $record
+     */
+    private function encodeRecord(array $record): string
+    {
+        return json_encode($record, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
     }
 
     private function linesToContents(array $lines): string

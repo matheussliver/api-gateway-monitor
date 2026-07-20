@@ -11,6 +11,10 @@ final class GatewayLogNormalizer
 {
     private const int MILLISECOND_TIMESTAMP_THRESHOLD = 100_000_000_000;
 
+    private const int MAX_SERVICE_NAME_LENGTH = 255;
+
+    private const int MAX_UNSIGNED_INTEGER = 4_294_967_295;
+
     /**
      * @param  array<string, mixed>  $record
      */
@@ -29,9 +33,9 @@ final class GatewayLogNormalizer
             record: $record,
             path: 'service.name',
         );
-        $latencyProxy = $this->requireNonNegativeInteger($record, 'latencies.proxy');
-        $latencyGateway = $this->requireNonNegativeInteger($record, 'latencies.gateway');
-        $latencyRequest = $this->requireNonNegativeInteger($record, 'latencies.request');
+        $latencyProxy = $this->requireLatency($record, 'latencies.proxy');
+        $latencyGateway = $this->requireLatency($record, 'latencies.gateway');
+        $latencyRequest = $this->requireLatency($record, 'latencies.request');
         $startedAt = $this->requireNonNegativeInteger($record, 'started_at');
 
         $createdAt = $startedAt >= self::MILLISECOND_TIMESTAMP_THRESHOLD
@@ -83,7 +87,33 @@ final class GatewayLogNormalizer
             throw InvalidGatewayLogRecord::forField($path, 'deve ser uma string não vazia');
         }
 
-        return trim($value);
+        $value = trim($value);
+
+        if (Str::length($value) > self::MAX_SERVICE_NAME_LENGTH) {
+            throw InvalidGatewayLogRecord::forField(
+                $path,
+                'deve ter no máximo '.self::MAX_SERVICE_NAME_LENGTH.' caracteres',
+            );
+        }
+
+        return $value;
+    }
+
+    /**
+     * @param  array<string, mixed>  $record
+     */
+    private function requireLatency(array $record, string $path): int
+    {
+        $value = $this->requireNonNegativeInteger($record, $path);
+
+        if ($value > self::MAX_UNSIGNED_INTEGER) {
+            throw InvalidGatewayLogRecord::forField(
+                $path,
+                'deve ser no máximo '.self::MAX_UNSIGNED_INTEGER,
+            );
+        }
+
+        return $value;
     }
 
     /**
