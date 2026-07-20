@@ -41,6 +41,11 @@ O arquivo real possui duas diferenças em relação ao payload de referência da
 
 Linhas vazias, JSON malformado, UUID inválido, campos ausentes, tipos incorretos e latências negativas são rejeitados individualmente. Cada rejeição é persistida com fonte, linha, byte, motivo e horário do processamento; os registros seguintes continuam sendo examinados. Logs válidos e rejeições são confirmados na mesma transação do checkpoint.
 
+Uma linha somente é considerada completa quando termina com `LF` (`\n`). Se o
+arquivo terminar no meio de uma linha, esse segmento final não é rejeitado nem
+incluído no checkpoint; ele permanece pendente até que uma execução posterior
+encontre o terminador.
+
 ## Requisitos
 
 - Docker com o plugin Docker Compose;
@@ -142,6 +147,7 @@ Ao executar novamente o comando:
 
 - Arquivo inalterado: zero inserções;
 - Linhas adicionadas: somente o novo trecho é processado;
+- Linha final sem `LF`: permanece pendente até ser concluída;
 - Arquivo truncado: a execução é recusada;
 - Mesma fonte em duas execuções simultâneas: a segunda é recusada;
 - Registro inválido: a rejeição é auditada e a leitura continua;

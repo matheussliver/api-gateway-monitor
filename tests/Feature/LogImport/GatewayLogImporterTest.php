@@ -117,6 +117,42 @@ final class GatewayLogImporterTest extends TestCase
         $this->assertDatabaseCount('gateway_logs', 2);
     }
 
+    public function test_it_defers_an_unterminated_final_line_until_it_is_completed(): void
+    {
+        $line = rtrim($this->fixture('valid-seconds.ndjson'), "\r\n");
+        $splitOffset = intdiv(strlen($line), 2);
+        $path = $this->createRawLogFile(substr($line, 0, $splitOffset));
+
+        $partialResult = $this->importer->import($path);
+
+        self::assertSame(0, $partialResult->importedRecords);
+        self::assertSame(0, $partialResult->rejectedRecords);
+        self::assertSame(0, $partialResult->endOffset);
+        self::assertSame(0, $partialResult->endLine);
+        $this->assertDatabaseCount('gateway_logs', 0);
+        $this->assertDatabaseCount('gateway_log_rejections', 0);
+
+        $source = LogSource::query()->sole();
+        self::assertSame(0, $source->last_processed_offset);
+        self::assertSame(0, $source->last_processed_line);
+        self::assertSame($splitOffset, $source->file_size);
+
+        file_put_contents($path, substr($line, $splitOffset).PHP_EOL, FILE_APPEND);
+
+        $completedResult = $this->importer->import($path);
+
+        self::assertSame(1, $completedResult->importedRecords);
+        self::assertSame(0, $completedResult->rejectedRecords);
+        self::assertSame(filesize($path), $completedResult->endOffset);
+        self::assertSame(1, $completedResult->endLine);
+        $this->assertDatabaseCount('gateway_logs', 1);
+        $this->assertDatabaseCount('gateway_log_rejections', 0);
+
+        $source->refresh();
+        self::assertSame(filesize($path), $source->last_processed_offset);
+        self::assertSame(1, $source->last_processed_line);
+    }
+
     public function test_an_invalid_line_is_rejected_without_stopping_later_records(): void
     {
         $firstLine = $this->fixture('valid-seconds.ndjson');
@@ -260,6 +296,11 @@ final class GatewayLogImporterTest extends TestCase
 
     private function createLogFile(array $lines): string
     {
+        return $this->createRawLogFile($this->linesToContents($lines));
+    }
+
+    private function createRawLogFile(string $contents): string
+    {
         $path = tempnam(sys_get_temp_dir(), 'gateway-logs-');
 
         if ($path === false) {
@@ -267,7 +308,7 @@ final class GatewayLogImporterTest extends TestCase
         }
 
         $this->temporaryFiles[] = $path;
-        file_put_contents($path, $this->linesToContents($lines));
+        file_put_contents($path, $contents);
 
         return $path;
     }

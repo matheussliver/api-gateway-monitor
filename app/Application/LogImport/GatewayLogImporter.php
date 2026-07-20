@@ -113,6 +113,12 @@ final class GatewayLogImporter
                 throw new InvalidLogFile("Não foi possível determinar o byte atual em [$path].");
             }
 
+            if ($currentOffset >= $fileSize && ! str_ends_with($line, "\n")) {
+                $currentOffset = $lineOffset;
+
+                break;
+            }
+
             $currentLine++;
 
             try {
