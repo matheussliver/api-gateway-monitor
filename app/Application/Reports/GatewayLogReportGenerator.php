@@ -9,62 +9,94 @@ use Throwable;
 
 final class GatewayLogReportGenerator
 {
-    private const string REQUESTS_BY_CONSUMER = 'requests_by_consumer.csv';
-
-    private const string REQUESTS_BY_SERVICE = 'requests_by_service.csv';
-
-    private const string AVERAGE_LATENCY_BY_SERVICE = 'average_latency_by_service.csv';
-
     public function generate(string $outputDirectory): CsvReportResult
     {
         $directory = $this->prepareOutputDirectory($outputDirectory);
-        $requestsByConsumerPath = $directory.DIRECTORY_SEPARATOR.self::REQUESTS_BY_CONSUMER;
-        $requestsByServicePath = $directory.DIRECTORY_SEPARATOR.self::REQUESTS_BY_SERVICE;
-        $averageLatencyByServicePath = $directory.DIRECTORY_SEPARATOR.self::AVERAGE_LATENCY_BY_SERVICE;
 
+        return $this->withConsistentSnapshot(function () use ($directory): CsvReportResult {
+            $consumerReport = $this->writeReport(
+                $directory,
+                GatewayLogReport::RequestsByConsumer,
+            );
+            $serviceReport = $this->writeReport(
+                $directory,
+                GatewayLogReport::RequestsByService,
+            );
+            $latencyReport = $this->writeReport(
+                $directory,
+                GatewayLogReport::AverageLatencyByService,
+            );
+
+            return new CsvReportResult(
+                outputDirectory: $directory,
+                requestsByConsumerPath: $consumerReport->path,
+                requestsByServicePath: $serviceReport->path,
+                averageLatencyByServicePath: $latencyReport->path,
+                consumerRows: $consumerReport->rows,
+                serviceRows: $serviceReport->rows,
+                latencyRows: $latencyReport->rows,
+            );
+        });
+    }
+
+    public function generateReport(
+        string $outputDirectory,
+        GatewayLogReport $report,
+    ): CsvReportFileResult {
+        $directory = $this->prepareOutputDirectory($outputDirectory);
+
+        return $this->withConsistentSnapshot(
+            fn (): CsvReportFileResult => $this->writeReport($directory, $report),
+        );
+    }
+
+    private function writeReport(string $directory, GatewayLogReport $report): CsvReportFileResult
+    {
+        $path = $directory.DIRECTORY_SEPARATOR.$report->filename();
+
+        [$header, $rows] = match ($report) {
+            GatewayLogReport::RequestsByConsumer => [
+                ['consumer_id', 'total_requests'],
+                $this->requestsByConsumerRows(),
+            ],
+            GatewayLogReport::RequestsByService => [
+                ['service_name', 'total_requests'],
+                $this->requestsByServiceRows(),
+            ],
+            GatewayLogReport::AverageLatencyByService => [
+                [
+                    'service_name',
+                    'average_request_latency',
+                    'average_proxy_latency',
+                    'average_gateway_latency',
+                ],
+                $this->averageLatencyByServiceRows(),
+            ],
+        };
+
+        return new CsvReportFileResult(
+            outputDirectory: $directory,
+            filename: $report->filename(),
+            path: $path,
+            rows: $this->writeCsv($path, $header, $rows),
+        );
+    }
+
+    /**
+     * @template TResult
+     *
+     * @param  callable(): TResult  $callback
+     * @return TResult
+     */
+    private function withConsistentSnapshot(callable $callback): mixed
+    {
         $connection = DB::connection();
 
         if ($connection->transactionLevel() === 0) {
             $connection->statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
         }
 
-        return $connection->transaction(function () use (
-            $directory,
-            $requestsByConsumerPath,
-            $requestsByServicePath,
-            $averageLatencyByServicePath,
-        ): CsvReportResult {
-            $consumerRows = $this->writeCsv(
-                path: $requestsByConsumerPath,
-                header: ['consumer_id', 'total_requests'],
-                rows: $this->requestsByConsumerRows(),
-            );
-            $serviceRows = $this->writeCsv(
-                path: $requestsByServicePath,
-                header: ['service_name', 'total_requests'],
-                rows: $this->requestsByServiceRows(),
-            );
-            $latencyRows = $this->writeCsv(
-                path: $averageLatencyByServicePath,
-                header: [
-                    'service_name',
-                    'average_request_latency',
-                    'average_proxy_latency',
-                    'average_gateway_latency',
-                ],
-                rows: $this->averageLatencyByServiceRows(),
-            );
-
-            return new CsvReportResult(
-                outputDirectory: $directory,
-                requestsByConsumerPath: $requestsByConsumerPath,
-                requestsByServicePath: $requestsByServicePath,
-                averageLatencyByServicePath: $averageLatencyByServicePath,
-                consumerRows: $consumerRows,
-                serviceRows: $serviceRows,
-                latencyRows: $latencyRows,
-            );
-        });
+        return $connection->transaction($callback);
     }
 
     private function prepareOutputDirectory(string $outputDirectory): string

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Reports;
 
+use App\Application\Reports\GatewayLogReport;
 use App\Application\Reports\GatewayLogReportGenerator;
 use App\Models\GatewayLog;
 use App\Models\LogSource;
@@ -62,6 +63,87 @@ alpha,150.00,60.00,15.00
 beta,300.00,90.00,30.00
 
 CSV, file_get_contents($result->averageLatencyByServicePath));
+    }
+
+    #[DataProvider('individualReportProvider')]
+    public function test_it_generates_each_report_individually(
+        GatewayLogReport $report,
+        string $filename,
+        string $expectedContent,
+    ): void {
+        $source = $this->createSource();
+        $this->createLog($source, 0, '11111111-1111-3111-8111-111111111111', 'alpha', 50, 10, 100);
+        $this->createLog($source, 100, '11111111-1111-3111-8111-111111111111', 'alpha', 70, 20, 200);
+        $this->createLog($source, 200, '22222222-2222-3222-8222-222222222222', 'beta', 90, 30, 300);
+        $directory = $this->temporaryDirectory();
+
+        $result = $this->generator()->generateReport($directory, $report);
+
+        self::assertSame($directory, $result->outputDirectory);
+        self::assertSame($filename, $result->filename);
+        self::assertSame($directory.DIRECTORY_SEPARATOR.$filename, $result->path);
+        self::assertSame(2, $result->rows);
+        self::assertSame($expectedContent, file_get_contents($result->path));
+        self::assertSame(
+            [$filename],
+            array_values(array_diff(scandir($directory) ?: [], ['.', '..'])),
+        );
+    }
+
+    /**
+     * @return iterable<string, array{GatewayLogReport, string, string}>
+     */
+    public static function individualReportProvider(): iterable
+    {
+        yield 'requisições por consumidor' => [
+            GatewayLogReport::RequestsByConsumer,
+            'requests_by_consumer.csv',
+            "consumer_id,total_requests\n"
+                ."11111111-1111-3111-8111-111111111111,2\n"
+                ."22222222-2222-3222-8222-222222222222,1\n",
+        ];
+
+        yield 'requisições por serviço' => [
+            GatewayLogReport::RequestsByService,
+            'requests_by_service.csv',
+            "service_name,total_requests\nalpha,2\nbeta,1\n",
+        ];
+
+        yield 'latência média por serviço' => [
+            GatewayLogReport::AverageLatencyByService,
+            'average_latency_by_service.csv',
+            "service_name,average_request_latency,average_proxy_latency,average_gateway_latency\n"
+                ."alpha,150.00,60.00,15.00\n"
+                ."beta,300.00,90.00,30.00\n",
+        ];
+    }
+
+    public function test_reports_generated_separately_can_represent_different_database_snapshots(): void
+    {
+        $source = $this->createSource();
+        $this->createLog($source, 0, '11111111-1111-3111-8111-111111111111', 'alpha', 50, 10, 100);
+        $directory = $this->temporaryDirectory();
+
+        $consumerResult = $this->generator()->generateReport(
+            $directory,
+            GatewayLogReport::RequestsByConsumer,
+        );
+
+        $this->createLog($source, 100, '11111111-1111-3111-8111-111111111111', 'beta', 70, 20, 200);
+
+        $serviceResult = $this->generator()->generateReport(
+            $directory,
+            GatewayLogReport::RequestsByService,
+        );
+
+        self::assertSame(
+            "consumer_id,total_requests\n11111111-1111-3111-8111-111111111111,1\n",
+            file_get_contents($consumerResult->path),
+        );
+        self::assertSame(
+            "service_name,total_requests\nalpha,1\nbeta,1\n",
+            file_get_contents($serviceResult->path),
+        );
     }
 
     public function test_empty_reports_contain_only_their_headers(): void

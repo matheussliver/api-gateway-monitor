@@ -9,6 +9,7 @@ use App\Models\LogSource;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\File;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Symfony\Component\Console\Command\Command;
 use Tests\TestCase;
 
@@ -48,6 +49,66 @@ final class GenerateGatewayLogReportsCommandTest extends TestCase
         self::assertFileExists($directory.'/requests_by_consumer.csv');
         self::assertFileExists($directory.'/requests_by_service.csv');
         self::assertFileExists($directory.'/average_latency_by_service.csv');
+    }
+
+    #[DataProvider('individualReportProvider')]
+    public function test_it_generates_only_the_selected_report(string $report, string $filename): void
+    {
+        $this->createLog();
+        $directory = $this->temporaryDirectory();
+
+        $this->artisan('gateway-logs:reports', [
+            'output' => $directory,
+            '--only' => $report,
+        ])
+            ->expectsOutputToContain('Relatório gerado em')
+            ->expectsOutputToContain("$filename: 1 linha de dados")
+            ->assertSuccessful();
+
+        self::assertSame(
+            [$filename],
+            array_values(array_diff(scandir($directory) ?: [], ['.', '..'])),
+        );
+    }
+
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function individualReportProvider(): iterable
+    {
+        yield 'consumidor' => ['consumer', 'requests_by_consumer.csv'];
+        yield 'serviço' => ['service', 'requests_by_service.csv'];
+        yield 'latência' => ['latency', 'average_latency_by_service.csv'];
+    }
+
+    public function test_it_rejects_an_invalid_individual_report_name(): void
+    {
+        $directory = $this->temporaryDirectory();
+
+        $this->artisan('gateway-logs:reports', [
+            'output' => $directory,
+            '--only' => 'desconhecido',
+        ])
+            ->expectsOutputToContain(
+                'Relatório inválido [desconhecido]. Use consumer, service ou latency.',
+            )
+            ->assertExitCode(Command::INVALID);
+
+        self::assertDirectoryDoesNotExist($directory);
+    }
+
+    public function test_it_rejects_the_only_option_without_a_report_name(): void
+    {
+        $directory = $this->temporaryDirectory();
+
+        $this->artisan('gateway-logs:reports', [
+            'output' => $directory,
+            '--only' => null,
+        ])
+            ->expectsOutputToContain('Relatório inválido []. Use consumer, service ou latency.')
+            ->assertExitCode(Command::INVALID);
+
+        self::assertDirectoryDoesNotExist($directory);
     }
 
     public function test_it_returns_failure_when_the_output_path_is_a_file(): void

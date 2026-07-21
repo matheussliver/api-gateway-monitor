@@ -205,6 +205,26 @@ isolamento `REPEATABLE READ`. O primeiro relatório estabelece o snapshot usado
 pelos demais; logs confirmados por uma importação concorrente aparecem somente
 na próxima geração, evitando totais referentes a instantes diferentes.
 
+Também é possível gerar somente um relatório por execução:
+
+```bash
+docker compose exec app php artisan gateway-logs:reports --only=consumer
+docker compose exec app php artisan gateway-logs:reports --only=service
+docker compose exec app php artisan gateway-logs:reports --only=latency
+```
+
+Os valores correspondem, respectivamente, a `requests_by_consumer.csv`,
+`requests_by_service.csv` e `average_latency_by_service.csv`. Nesse modo, apenas
+o arquivo escolhido é gerado; os outros arquivos existentes no diretório não
+são modificados.
+
+**A garantia de que os três relatórios representam exatamente o mesmo conjunto
+de logs existe somente quando eles são gerados juntos, em uma única execução sem
+`--only`.** Cada geração individual inicia sua própria transação e usa um novo
+snapshot. Se uma importação inserir registros entre duas execuções individuais,
+os arquivos poderão representar instantes e conjuntos de dados diferentes.
+Quando os relatórios precisarem ser comparados entre si, gere os três juntos.
+
 Também é possível informar outro diretório dentro do container:
 
 ```bash
@@ -313,7 +333,7 @@ Os testes cobrem:
 - Persistência e idempotência das rejeições;
 - Reexecução, append, truncamento e concorrência;
 - Códigos de saída e mensagens dos comandos;
-- Conteúdo exato dos CSVs;
+- Conteúdo exato dos CSVs nas gerações conjunta e individual;
 - Banco vazio, escaping e regeneração dos relatórios;
 - Integração real com MySQL.
 
